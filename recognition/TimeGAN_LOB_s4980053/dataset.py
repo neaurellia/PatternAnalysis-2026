@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import torch
+from torch.utils.data import Dataset, DataLoader
 
 def load_lobster(book_path, msg_path):
     """Return times (N,) in seconds after midnight, and book (N, 40)."""
@@ -91,6 +93,21 @@ def normalise(train, val, test):
     test = (test - mean) / std
     return train, val, test, mean, std
 
+class LOBWindows(Dataset):
+    """Cuts a (rows, 41) array into windows of seq_len consecutive rows."""
+
+    def __init__(self, data, seq_len=60, stride=1):
+        self.data = torch.tensor(data, dtype=torch.float32)
+        self.seq_len = seq_len
+        self.starts = range(0, len(data) - seq_len + 1, stride)
+
+    def __len__(self):
+        return len(self.starts)
+    
+    def __getitem__(self, i):
+        start = self.starts[i]
+        return self.data[start:start + self.seq_len]
+
 if __name__ == "__main__":
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
@@ -115,3 +132,11 @@ if __name__ == "__main__":
     train, val, test, mean, std = normalise(train, val, test)
     print("train mean ~0:", train.mean().round(3), "| train std ~1:", train.std().round(3))
     print("val mean:", val.mean().round(3), "| val std:", val.std().round(3))
+
+    train_ds = LOBWindows(train, stride=1)
+    val_ds = LOBWindows(val, stride=60)
+    test_ds = LOBWindows(test, stride=60)
+    print("windows (train / val / test):", len(train_ds), len(val_ds), len(test_ds))
+
+    loader = DataLoader(train_ds, batch_size=128, shuffle=True)
+    print("one batch:", next(iter(loader)).shape)
