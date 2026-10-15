@@ -72,6 +72,15 @@ def encode(snapshots):
     # glue everything side by side: 1 + 10 + 10 + 20 = 41 columns
     return np.concatenate([log_ret[:, None], ask_off, bid_off, log_sizes], axis=1)
 
+def split_by_time(grid, features):
+    """Split features into train / val / test by time of day."""
+    t = grid[1:]                      # times that line up with the feature rows
+
+    train = features[t < 14 * 3600]
+    val   = features[(t >= 14 * 3600) & (t < 15 * 3600)]
+    test  = features[t >= 15 * 3600]
+    return train, val, test
+
 if __name__ == "__main__":
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
@@ -89,3 +98,6 @@ if __name__ == "__main__":
     print("features:", features.shape)
     print("ask offsets all positive:", (features[:, 1:11] > 0).all())
     print("bid offsets all negative:", (features[:, 11:21] < 0).all())
+
+    train, val, test = split_by_time(grid, features)
+    print("train / val / test rows:", len(train), len(val), len(test))
