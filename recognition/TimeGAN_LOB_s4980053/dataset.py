@@ -81,6 +81,16 @@ def split_by_time(grid, features):
     test  = features[t >= 15 * 3600]
     return train, val, test
 
+def normalise(train, val, test):
+    """Scale each column to mean 0, std 1 using TRAINING statistics only."""
+    mean = train.mean(axis=0)          # one mean per column → shape (41,)
+    std = train.std(axis=0) + 1e-8     # + tiny number: avoids dividing by 0 if a column never changes
+
+    train = (train - mean) / std
+    val = (val - mean) / std
+    test = (test - mean) / std
+    return train, val, test, mean, std
+
 if __name__ == "__main__":
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
@@ -101,3 +111,7 @@ if __name__ == "__main__":
 
     train, val, test = split_by_time(grid, features)
     print("train / val / test rows:", len(train), len(val), len(test))
+
+    train, val, test, mean, std = normalise(train, val, test)
+    print("train mean ~0:", train.mean().round(3), "| train std ~1:", train.std().round(3))
+    print("val mean:", val.mean().round(3), "| val std:", val.std().round(3))
