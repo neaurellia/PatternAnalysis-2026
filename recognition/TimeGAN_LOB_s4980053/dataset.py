@@ -108,6 +108,18 @@ class LOBWindows(Dataset):
         start = self.starts[i]
         return self.data[start:start + self.seq_len]
 
+# TODO: decode(features, mean, std, start_mid)
+#   goal: the exact reverse of normalise + encode -> back to a (T, 40) order book
+#   test: decoding the real features should give back the real snapshots (minus the first row)
+
+# TODO: make_loaders(book_file, msg_file, seq_len=60, batch_size=128)
+# TODO:   load -> resample -> encode -> split -> normalise   (all functions you already wrote)
+# TODO:   three LOBWindows: train overlapping, val and test not overlapping
+# TODO:   three DataLoaders: only the training one shuffles
+# TODO:   return the loaders AND mean, std  (think: why does train.py need those too?)
+# TODO:   test in main: one batch from the train loader -> (128, 60, 41)
+
+
 if __name__ == "__main__":
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
