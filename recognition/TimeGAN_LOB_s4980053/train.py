@@ -14,7 +14,7 @@ from modules import BaselineGAN, count_parameters
 # settings
 # ---------------------------------------------------------------------------
 
-EPOCHS = 50            # passes over the whole training set
+EPOCHS = 10            # passes over the whole training set
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
 SEQ_LEN = 60
@@ -22,7 +22,7 @@ HIDDEN_DIM = 24        # GRU memory size
 NUM_LAYERS = 3
 SEED = 42              # fixed randomness, so a run can be repeated exactly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
-SMOKE_TEST = True      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
+SMOKE_TEST = False      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
 
 # ---------------------------------------------------------------------------
 # training loop
