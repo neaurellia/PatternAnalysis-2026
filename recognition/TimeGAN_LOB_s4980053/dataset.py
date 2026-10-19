@@ -108,9 +108,27 @@ class LOBWindows(Dataset):
         start = self.starts[i]
         return self.data[start:start + self.seq_len]
 
-# TODO: decode(features, mean, std, start_mid)
+def decode(features, mean, std, start_mid):
 #   goal: the exact reverse of normalise + encode -> back to a (T, 40) order book
 #   test: decoding the real features should give back the real snapshots (minus the first row)
+    x = features * std + mean
+
+    log_ret = x[:, 0]                         # column 0
+    ask_off = x[:, 1:11]                      # columns 1-10
+    bid_off = x[:, 11:21]                     # columns 11-20
+    log_sizes = x[:, 21:41]                   # columns 21-40
+
+    mid = start_mid * np.exp(np.cumsum(log_ret))     
+    ask_price = mid[:, None] + ask_off * 100                           
+    bid_price = mid[:, None] + bid_off * 100
+    sizes = np.exp(log_sizes)                               
+
+    book = np.zeros((len(x), 40))
+    book[:, 0::4] = ask_price                 # put everything back in LOBSTER's column order
+    book[:, 1::4] = sizes[:, :10]                       # ask sizes = first 10 columns of sizes
+    book[:, 2::4] = bid_price
+    book[:, 3::4] = sizes[:, 10:]                       # bid sizes = last 10 columns of sizes
+    return book
 
 def make_loaders(book_file, msg_file, seq_len=60, batch_size=128):
     """Run the whole data chain and return train/val/test DataLoaders plus mean and std."""
@@ -164,3 +182,7 @@ if __name__ == "__main__":
 
     train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file)
     print("make_loaders batch:", next(iter(train_loader)).shape)    # expect (128, 60, 41)
+
+    start_mid = (snapshots[0, 0] + snapshots[0, 2]) / 2          # mid of the very first snapshot
+    rebuilt = decode((features - mean) / std, mean, std, start_mid)
+    print("round-trip max error:", np.abs(rebuilt - snapshots[1:]).max())
