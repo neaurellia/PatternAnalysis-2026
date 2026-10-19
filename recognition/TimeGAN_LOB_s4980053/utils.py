@@ -1,9 +1,21 @@
 # utils.py - scoring generated order books against real ones
 # (all of these work on DECODED books, not on normalised features)
 
-# TODO: invalid book rate
-#   goal: % of generated snapshots that break the spread / ladder / volume rules
-#   think: you already wrote something that counts this
+import numpy as np
+
+from dataset import check_rules, decode
+
+
+def windows_to_books(windows, mean, std, start_mid=2_230_000.0):
+    """Generated windows (N, T, 41) -> order books (N, T, 40), by decoding each window."""
+    return np.stack([decode(w, mean, std, start_mid) for w in windows])       # decode each window w
+
+def invalid_rates(books):
+    """Fraction of snapshots breaking each rule: (spread, ladder, volume)."""
+    flat = books.reshape(-1, 40)                  # (N, T, 40) -> (N*T, 40): one row per snapshot
+    n_spread, n_ladder, n_volume = check_rules(flat)            # rule checker
+    rows = len(flat)
+    return n_spread / rows, n_ladder / rows, n_volume / rows                                    # each count divided by the number of rows
 
 # TODO: spreads and returns
 #   goal: pull the two quantities the spec's KL targets are about out of a set of books

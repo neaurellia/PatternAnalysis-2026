@@ -9,6 +9,7 @@ import time
 
 from dataset import make_loaders
 from modules import BaselineGAN, count_parameters
+from utils import invalid_rates, windows_to_books
 
 # ---------------------------------------------------------------------------
 # settings
@@ -22,7 +23,7 @@ HIDDEN_DIM = 24        # GRU memory size
 NUM_LAYERS = 3
 SEED = 42              # fixed randomness, so a run can be repeated exactly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
-SMOKE_TEST = False      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
+SMOKE_TEST = True      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
 
 # ---------------------------------------------------------------------------
 # training loop
@@ -110,5 +111,11 @@ if __name__ == "__main__":
     print(f"training time: {minutes:.1f} min")
     if DEVICE == "cuda":
         print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
+
+    # evaluate: does the baseline make valid books?
+    fake = model.generate(1000, SEQ_LEN, DEVICE).cpu().numpy()     # 1000 windows, as numpy
+    books = windows_to_books(fake, mean, std)
+    spread, ladder, volume = invalid_rates(books)
+    print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
 
 # LATER: TimeGAN's three phases (autoencoder -> supervisor -> joint)
