@@ -1,20 +1,23 @@
 # modules.py - the networks
 
-# TODO: imports (torch, torch.nn)
+import torch
+import torch.nn as nn
 
 
 # ---------------------------------------------------------------------------
 # RecurrentBlock - the shared building block
 # shape: (batch, 60, in_dim) -> (batch, 60, out_dim)
 # ---------------------------------------------------------------------------
-# TODO: class RecurrentBlock(nn.Module)
-# TODO:   __init__(in_dim, hidden_dim, out_dim, num_layers)
-# TODO:     a GRU: in_dim -> hidden_dim, num_layers deep, batches first
-# TODO:     a Linear layer: hidden_dim -> out_dim
-# TODO:   forward(x)
-# TODO:     run the GRU, keep the output at EVERY step (not just the last)
-# TODO:     run the Linear layer on that, return it
 
+class RecurrentBlock(nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim, num_layers):
+        super().__init__()
+        self.gru = nn.GRU(in_dim, hidden_dim, num_layers, batch_first=True)
+        self.linear = nn.Linear(hidden_dim, out_dim)
+
+    def forward(self, x):
+        output, _ = self.gru(x)
+        return self.linear(output)
 
 # ---------------------------------------------------------------------------
 # BaselineGAN - a plain GAN for sequences
@@ -38,11 +41,10 @@
 # ---------------------------------------------------------------------------
 # quick self-test: python modules.py
 # ---------------------------------------------------------------------------
-# TODO: if __name__ == "__main__":
-# TODO:   RecurrentBlock on random (128, 60, 41) -> expect (128, 60, 41)
-# TODO:   BaselineGAN(41, ...): generate 8 windows -> expect (8, 60, 41)
-# TODO:   discriminator on those windows -> expect (8, 60, 1)
-# TODO:   print the parameter count
+if __name__ == "__main__":
+    block = RecurrentBlock(in_dim=41, hidden_dim=24, out_dim=41, num_layers=3)
+    x = torch.randn(128, 60, 41)
+    print(block(x).shape)
 
 
 # LATER (after the baseline trains): TimeGAN - autoencoder, supervisor, generator/discriminator
