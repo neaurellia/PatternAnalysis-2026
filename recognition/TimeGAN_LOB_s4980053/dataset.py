@@ -112,12 +112,21 @@ class LOBWindows(Dataset):
 #   goal: the exact reverse of normalise + encode -> back to a (T, 40) order book
 #   test: decoding the real features should give back the real snapshots (minus the first row)
 
-# TODO: make_loaders(book_file, msg_file, seq_len=60, batch_size=128)
-# TODO:   load -> resample -> encode -> split -> normalise   (all functions you already wrote)
-# TODO:   three LOBWindows: train overlapping, val and test not overlapping
-# TODO:   three DataLoaders: only the training one shuffles
-# TODO:   return the loaders AND mean, std  (think: why does train.py need those too?)
-# TODO:   test in main: one batch from the train loader -> (128, 60, 41)
+def make_loaders(book_file, msg_file, seq_len=60, batch_size=128):
+    """Run the whole data chain and return train/val/test DataLoaders plus mean and std."""
+    # 1-5: copy these from your main (no prints)
+    times, book = load_lobster(book_file, msg_file)
+    grid, snapshots = resample(times, book)
+    features = encode(snapshots)
+    train, val, test = split_by_time(grid, features)
+    train, val, test, mean, std = normalise(train, val, test)
+
+    # windows -> loaders (only the training loader shuffles)
+    train_loader = DataLoader(LOBWindows(train, seq_len, stride=1), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(LOBWindows(val, seq_len, stride=seq_len), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(LOBWindows(test, seq_len, stride=seq_len), batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader, test_loader, mean, std
 
 
 if __name__ == "__main__":
@@ -152,3 +161,6 @@ if __name__ == "__main__":
 
     loader = DataLoader(train_ds, batch_size=128, shuffle=True)
     print("one batch:", next(iter(loader)).shape)
+
+    train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file)
+    print("make_loaders batch:", next(iter(train_loader)).shape)    # expect (128, 60, 41)
