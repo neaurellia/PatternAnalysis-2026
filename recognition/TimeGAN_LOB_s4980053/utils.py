@@ -28,6 +28,15 @@ def vwap_stats(books):
     """Mean and standard deviation of the VWAP offset over all snapshots."""
     v = vwap_offset(books)
     return v.mean(), v.std()
+
+def volatility_clustering(books):
+    """Correlation between the size of one mid-price move and the next. Positive = big moves follow big moves."""
+    mid = (books[..., 0] + books[..., 2]) / 2                                 # (best ask + best bid) / 2, for every step of every window
+    moves = np.abs(np.diff(mid, axis=-1))     # size of each move, along time
+    now = moves[:, :-1].ravel()               # every move except the last
+    nxt = moves[:, 1:].ravel()                                 # every move except the first
+    return np.corrcoef(now, nxt)[0, 1]
+
 # TODO: spreads and returns
 #   goal: pull the two quantities the spec's KL targets are about out of a set of books
 
@@ -35,7 +44,6 @@ def vwap_stats(books):
 #   goal: one number for how different two histograms are (target <= 0.1)
 #   think: both histograms must use the same bins - why?
 
-# TODO: volatility clustering
 #   goal: do big moves follow big moves? one number, compare real vs fake
 
 # TODO: real-vs-real reference

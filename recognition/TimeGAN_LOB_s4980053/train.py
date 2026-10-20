@@ -9,7 +9,7 @@ import time
 
 from dataset import make_loaders
 from modules import BaselineGAN, count_parameters
-from utils import invalid_rates, windows_to_books, vwap_stats
+from utils import invalid_rates, windows_to_books, vwap_stats, volatility_clustering
 
 # ---------------------------------------------------------------------------
 # settings
@@ -121,5 +121,7 @@ if __name__ == "__main__":
     real = next(iter(test_loader)).numpy()           # real test windows
     real_books = windows_to_books(real, mean, std)
     print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
+
+    print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
 
 # LATER: TimeGAN's three phases (autoencoder -> supervisor -> joint)
