@@ -9,7 +9,7 @@ import time
 
 from dataset import make_loaders
 from modules import BaselineGAN, count_parameters
-from utils import invalid_rates, windows_to_books
+from utils import invalid_rates, windows_to_books, vwap_stats
 
 # ---------------------------------------------------------------------------
 # settings
@@ -117,5 +117,9 @@ if __name__ == "__main__":
     books = windows_to_books(fake, mean, std)
     spread, ladder, volume = invalid_rates(books)
     print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
+
+    real = next(iter(test_loader)).numpy()           # real test windows
+    real_books = windows_to_books(real, mean, std)
+    print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
 
 # LATER: TimeGAN's three phases (autoencoder -> supervisor -> joint)

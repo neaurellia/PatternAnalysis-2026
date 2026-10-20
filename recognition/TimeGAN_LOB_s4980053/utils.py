@@ -5,7 +5,6 @@ import numpy as np
 
 from dataset import check_rules, decode
 
-
 def windows_to_books(windows, mean, std, start_mid=2_230_000.0):
     """Generated windows (N, T, 41) -> order books (N, T, 40), by decoding each window."""
     return np.stack([decode(w, mean, std, start_mid) for w in windows])       # decode each window w
@@ -17,6 +16,18 @@ def invalid_rates(books):
     rows = len(flat)
     return n_spread / rows, n_ladder / rows, n_volume / rows                                    # each count divided by the number of rows
 
+def vwap_offset(books):
+    """How far the whole book's VWAP sits from the mid, in ticks. One value per snapshot."""
+    prices = np.concatenate([books[..., 0::4], books[..., 2::4]], axis=-1)   # all 20 prices
+    sizes = np.concatenate([books[..., 1::4], books[..., 3::4]], axis=-1)    # all 20 sizes
+    vwap = (prices * sizes).sum(axis=-1) / sizes.sum(axis=-1)     # sum of (prices * sizes) over the last axis, divided by sum of sizes
+    mid = (books[..., 0] + books[..., 2]) / 2    
+    return (vwap - mid) / 100
+
+def vwap_stats(books):
+    """Mean and standard deviation of the VWAP offset over all snapshots."""
+    v = vwap_offset(books)
+    return v.mean(), v.std()
 # TODO: spreads and returns
 #   goal: pull the two quantities the spec's KL targets are about out of a set of books
 
