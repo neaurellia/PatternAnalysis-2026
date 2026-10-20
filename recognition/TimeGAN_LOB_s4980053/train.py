@@ -15,7 +15,7 @@ from utils import invalid_rates, windows_to_books, vwap_stats
 # settings
 # ---------------------------------------------------------------------------
 
-EPOCHS = 10            # passes over the whole training set
+EPOCHS = 50            # passes over the whole training set
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
 SEQ_LEN = 60
