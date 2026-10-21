@@ -4,3 +4,4 @@ data/
 *.pt
 __pycache__/
 *.png
+logs/
