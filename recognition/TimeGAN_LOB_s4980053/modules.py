@@ -42,6 +42,19 @@ class BaselineGAN(nn.Module):
         noise = self.sample_noise(batch_size, seq_len, device)
         return self.generator(noise)
 
+class TimeGAN(nn.Module):
+    """TimeGAN (Yoon et al., 2019). Part 1: the autoencoder (embedder + recovery)."""
+
+    def __init__(self, feature_dim, hidden_dim, num_layers):
+        super().__init__()
+        self.embedder = RecurrentBlock(feature_dim, hidden_dim, hidden_dim, num_layers, sigmoid=True)     # zip:   feature_dim in -> hidden_dim out, WITH sigmoid
+        self.recovery = RecurrentBlock(hidden_dim, hidden_dim, feature_dim, num_layers)     # unzip: hidden_dim in -> feature_dim out, no sigmoid
+
+    def reconstruct(self, x):
+        """Zip then unzip a real window. Used to train phase 1."""
+        code = self.embedder(x)
+        return self.recovery(code)              # x -> embedder -> recovery
+
 def count_parameters(model):
     """Number of trainable weights in a model."""
     total = 0
@@ -67,5 +80,6 @@ if __name__ == "__main__":
     squashed = RecurrentBlock(41, 24, 24, 3, sigmoid=True)(x)
     print("sigmoid block:", squashed.shape, "min", squashed.min().item(), "max", squashed.max().item())
 
-
-# LATER (after the baseline trains): TimeGAN - autoencoder, supervisor, generator/discriminator
+    tg = TimeGAN(feature_dim=41, hidden_dim=24, num_layers=3)
+    print("reconstruction:", tg.reconstruct(x).shape)                   # expect (128, 60, 41)
+    print("autoencoder parameters:", count_parameters(tg))
