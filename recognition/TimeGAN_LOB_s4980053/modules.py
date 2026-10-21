@@ -10,14 +10,18 @@ import torch.nn as nn
 # ---------------------------------------------------------------------------
 
 class RecurrentBlock(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, num_layers):
+    def __init__(self, in_dim, hidden_dim, out_dim, num_layers, sigmoid=False):
         super().__init__()
         self.gru = nn.GRU(in_dim, hidden_dim, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_dim, out_dim)
+        self.sigmoid = sigmoid
 
     def forward(self, x):
         output, _ = self.gru(x)
-        return self.linear(output)
+        out = self.linear(output)
+        if self.sigmoid:
+            out = torch.sigmoid(out)                      # squash into 0-1 
+        return out
 
 # ---------------------------------------------------------------------------
 # BaselineGAN - a plain GAN for sequences
@@ -59,6 +63,9 @@ if __name__ == "__main__":
     print("scores:", gan.discriminator(fake).shape)     # expect (8, 60, 1)
 
     print("parameters: ", count_parameters(gan))
+
+    squashed = RecurrentBlock(41, 24, 24, 3, sigmoid=True)(x)
+    print("sigmoid block:", squashed.shape, "min", squashed.min().item(), "max", squashed.max().item())
 
 
 # LATER (after the baseline trains): TimeGAN - autoencoder, supervisor, generator/discriminator
