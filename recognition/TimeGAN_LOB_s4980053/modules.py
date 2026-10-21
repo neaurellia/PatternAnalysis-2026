@@ -43,12 +43,13 @@ class BaselineGAN(nn.Module):
         return self.generator(noise)
 
 class TimeGAN(nn.Module):
-    """TimeGAN (Yoon et al., 2019). Part 1: the autoencoder (embedder + recovery)."""
+    """TimeGAN (Yoon et al., 2019). Part 1: the autoencoder (embedder + recovery) and supervisor for now."""
 
     def __init__(self, feature_dim, hidden_dim, num_layers):
         super().__init__()
         self.embedder = RecurrentBlock(feature_dim, hidden_dim, hidden_dim, num_layers, sigmoid=True)     # zip:   feature_dim in -> hidden_dim out, WITH sigmoid
         self.recovery = RecurrentBlock(hidden_dim, hidden_dim, feature_dim, num_layers)     # unzip: hidden_dim in -> feature_dim out, no sigmoid
+        self.supervisor = RecurrentBlock(hidden_dim, hidden_dim, hidden_dim, num_layers, sigmoid=True)
 
     def reconstruct(self, x):
         """Zip then unzip a real window. Used to train phase 1."""
@@ -83,3 +84,7 @@ if __name__ == "__main__":
     tg = TimeGAN(feature_dim=41, hidden_dim=24, num_layers=3)
     print("reconstruction:", tg.reconstruct(x).shape)                   # expect (128, 60, 41)
     print("autoencoder parameters:", count_parameters(tg))
+
+    codes = tg.embedder(x)                # real-ish window -> zip files
+    print("codes:", codes.shape)              
+    print("supervisor:", tg.supervisor(codes).shape)   # expect (128, 60, 24): one guess per step
