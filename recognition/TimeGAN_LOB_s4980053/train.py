@@ -102,6 +102,33 @@ def train_autoencoder(model, loader, epochs, lr, device, max_batches=None):
 
     return history
 
+def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
+    """TimeGAN phase 2: the supervisor learns to predict the next latent code. Embedder frozen."""
+    opt = torch.optim.Adam(model.supervisor.parameters(), lr=lr)              # ONLY the supervisor's dials
+    history = []
+
+    for epoch in range(1, epochs + 1):
+        total, n = 0.0, 0
+        for real in loader:
+            real = real.to(device)
+            with torch.no_grad():                      # frozen: no trace into the embedder
+                codes = model.embedder(real)                            # zip the real window
+            guesses = model.supervisor(codes)                              # supervisor on the codes
+            loss = F.mse_loss(guesses[:, :-1], codes[:, 1:])   # guess for t+1 vs the real code at t+1
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
+            total += loss.item()
+            n += 1
+            if max_batches is not None and n == max_batches:
+                break
+
+        history.append(total / n)
+        print(f"[supervisor] epoch {epoch}/{epochs}  next-step mse {total / n:.4f}")
+
+    return history
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
