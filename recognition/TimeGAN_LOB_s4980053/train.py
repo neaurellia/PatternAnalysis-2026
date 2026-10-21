@@ -1,4 +1,4 @@
-# train.py - training and saving the baseline GAN
+# train.py - training and saving the baseline GAN and TimeGAN
 
 import matplotlib
 matplotlib.use("Agg")
@@ -15,7 +15,9 @@ from utils import invalid_rates, windows_to_books, vwap_stats, volatility_cluste
 # settings
 # ---------------------------------------------------------------------------
 
-EPOCHS = 50            # passes over the whole training set
+BASELINE_EPOCHS = 50   # baseline GAN: settles by ~epoch 25
+AE_EPOCHS = 200        # TimeGAN phase 1: still improving at 50, much better at 200
+SUP_EPOCHS = 200       # TimeGAN phase 2
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
 SEQ_LEN = 60
@@ -141,14 +143,14 @@ if __name__ == "__main__":
     # data (shared by both models)
     train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file, SEQ_LEN, BATCH_SIZE)
     feature_dim = mean.shape[0]                                # 41: one mean per feature
-    epochs, max_batches = (1, 5) if SMOKE_TEST else (EPOCHS, None)
+    max_batches = 5 if SMOKE_TEST else None
 
     if MODEL == "baseline":
         model = BaselineGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)
         print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
 
         start = time.time()
-        history = train_baseline(model, train_loader, epochs, LR, DEVICE, max_batches)
+        history = train_baseline(model, train_loader, 1 if SMOKE_TEST else BASELINE_EPOCHS, LR, DEVICE, max_batches)
         minutes = (time.time() - start) / 60
 
         torch.save({"model": model.state_dict(), "mean": mean, "std": std,
@@ -177,11 +179,12 @@ if __name__ == "__main__":
         print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
 
     else:
-        model = TimeGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)                                        # a TimeGAN with feature_dim, HIDDEN_DIM, NUM_LAYERS, on DEVICE
+        model = TimeGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)                                      
         print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
 
         start = time.time()
-        ae_history = train_autoencoder(model, train_loader, epochs, LR, DEVICE, max_batches)                                   # call train_autoencoder (same arguments as train_baseline)
+        ae_history = train_autoencoder(model, train_loader, 1 if SMOKE_TEST else AE_EPOCHS, LR, DEVICE, max_batches)                                   # call train_autoencoder (same arguments as train_baseline)
+        supervisor_history = train_supervisor(model, train_loader, 1 if SMOKE_TEST else SUP_EPOCHS, LR, DEVICE, max_batches)
         print(f"training time: {(time.time() - start) / 60:.1f} min")
 
         # check phase 1 on TEST windows: hours the autoencoder never trained on
@@ -193,5 +196,11 @@ if __name__ == "__main__":
         books = windows_to_books(rebuilt.cpu().numpy(), mean, std)
         spread, ladder, volume = invalid_rates(books)
         print(f"rebuilt books broken - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
-
+        # check phase 2 on TEST windows
+        with torch.no_grad():
+            codes = model.embedder(real)
+            guesses = model.supervisor(codes)
+        print(f"test next-step mse: {F.mse_loss(guesses[:, :-1], codes[:, 1:]).item():.2e}")
+        print(f"'no change' guess mse: {F.mse_loss(codes[:, :-1], codes[:, 1:]).item():.2e}")
+        
         torch.save({"model": model.state_dict(), "mean": mean, "std": std}, "timegan.pt")
