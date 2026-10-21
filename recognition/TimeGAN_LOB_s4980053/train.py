@@ -24,6 +24,7 @@ NUM_LAYERS = 3
 SEED = 42              # fixed randomness, so a run can be repeated exactly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
 SMOKE_TEST = True      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
+MODEL = "timegan"      # "baseline" or "timegan"
 
 # ---------------------------------------------------------------------------
 # training loop
@@ -110,48 +111,60 @@ if __name__ == "__main__":
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
 
-    # data
+    # data (shared by both models)
     train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file, SEQ_LEN, BATCH_SIZE)
     feature_dim = mean.shape[0]                                # 41: one mean per feature
-
-    # model
-    model = BaselineGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)
-    print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
-
-    # train (timed)
     epochs, max_batches = (1, 5) if SMOKE_TEST else (EPOCHS, None)
-    start = time.time()
-    history = train_baseline(model, train_loader, epochs, LR, DEVICE, max_batches)
-    minutes = (time.time() - start) / 60
 
-    # save everything needed to use the model later (*.pt is gitignored)
-    torch.save({"model": model.state_dict(), "mean": mean, "std": std,
-                "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-               "baseline.pt")
+    if MODEL == "baseline":
+        model = BaselineGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)
+        print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
 
-    # loss curves
-    plt.plot(history["d_loss"], label="discriminator")
-    plt.plot(history["g_loss"], label="generator")
-    plt.xlabel("epoch")
-    plt.ylabel("loss")
-    plt.legend()
-    plt.savefig("baseline_losses.png", dpi=150)
+        start = time.time()
+        history = train_baseline(model, train_loader, epochs, LR, DEVICE, max_batches)
+        minutes = (time.time() - start) / 60
 
-    # resources (acceptance criterion 5)
-    print(f"training time: {minutes:.1f} min")
-    if DEVICE == "cuda":
-        print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
+        torch.save({"model": model.state_dict(), "mean": mean, "std": std,
+                    "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
+                   "baseline.pt")
 
-    # evaluate: does the baseline make valid books?
-    fake = model.generate(1000, SEQ_LEN, DEVICE).cpu().numpy()     # 1000 windows, as numpy
-    books = windows_to_books(fake, mean, std)
-    spread, ladder, volume = invalid_rates(books)
-    print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
+        plt.plot(history["d_loss"], label="discriminator")
+        plt.plot(history["g_loss"], label="generator")
+        plt.xlabel("epoch")
+        plt.ylabel("loss")
+        plt.legend()
+        plt.savefig("baseline_losses.png", dpi=150)
 
-    real = next(iter(test_loader)).numpy()           # real test windows
-    real_books = windows_to_books(real, mean, std)
-    print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
+        print(f"training time: {minutes:.1f} min")
+        if DEVICE == "cuda":
+            print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
 
-    print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
+        fake = model.generate(1000, SEQ_LEN, DEVICE).cpu().numpy()
+        books = windows_to_books(fake, mean, std)
+        spread, ladder, volume = invalid_rates(books)
+        print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
 
-# LATER: TimeGAN's three phases (autoencoder -> supervisor -> joint)
+        real = next(iter(test_loader)).numpy()
+        real_books = windows_to_books(real, mean, std)
+        print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
+        print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
+
+    else:
+        model = TimeGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)                                        # a TimeGAN with feature_dim, HIDDEN_DIM, NUM_LAYERS, on DEVICE
+        print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
+
+        start = time.time()
+        ae_history = train_autoencoder(model, train_loader, epochs, LR, DEVICE, max_batches)                                   # call train_autoencoder (same arguments as train_baseline)
+        print(f"training time: {(time.time() - start) / 60:.1f} min")
+
+        # check phase 1 on TEST windows: hours the autoencoder never trained on
+        real = next(iter(test_loader)).to(DEVICE)
+        with torch.no_grad():
+            rebuilt = model.reconstruct(real)
+        print(f"test reconstruction mse: {F.mse_loss(rebuilt, real).item():.4f}")
+
+        books = windows_to_books(rebuilt.cpu().numpy(), mean, std)
+        spread, ladder, volume = invalid_rates(books)
+        print(f"rebuilt books broken - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
+
+        torch.save({"model": model.state_dict(), "mean": mean, "std": std}, "timegan.pt")
