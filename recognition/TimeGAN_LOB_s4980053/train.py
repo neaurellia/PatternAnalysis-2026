@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import time
 
 from dataset import make_loaders
-from modules import BaselineGAN, count_parameters
+from modules import BaselineGAN, TimeGAN, count_parameters
 from utils import invalid_rates, windows_to_books, vwap_stats, volatility_clustering
 
 # ---------------------------------------------------------------------------
@@ -70,6 +70,36 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
 
     return history
 
+def train_autoencoder(model, loader, epochs, lr, device, max_batches=None):
+    """TimeGAN phase 1: embedder + recovery learn to zip and unzip real windows."""
+    '''for each batch of real windows:
+        rebuilt = reconstruct(real)
+        loss = how different rebuilt is from real   (mean squared error)
+        zero_grad → backward → step'''
+
+    params = list(model.embedder.parameters()) + list(model.recovery.parameters())
+    opt = torch.optim.Adam(params, lr=lr)
+    history = []
+
+    for epoch in range(1, epochs + 1):
+        total, n = 0.0, 0
+        for real in loader:
+            real = real.to(device)
+            rebuilt = model.reconstruct(real)                           # zip + unzip (your new method)
+            loss = F.mse_loss(rebuilt, real)        # mean squared error
+            opt.zero_grad()
+            loss.backward()
+            opt.step()                                     # the three optimiser lines
+
+            total += loss.item()
+            n += 1
+            if max_batches is not None and n == max_batches:
+                break
+
+        history.append(total / n)
+        print(f"[autoencoder] epoch {epoch}/{epochs}  reconstruction mse {total / n:.4f}")
+
+    return history
 
 # ---------------------------------------------------------------------------
 # main
