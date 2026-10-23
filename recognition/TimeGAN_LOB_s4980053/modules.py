@@ -2,7 +2,13 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+def with_label(x, labels, num_stocks=5):
+    """Attach each window's one-hot stock label to every time step: (B, T, d) -> (B, T, d + num_stocks)."""
+    onehot = F.one_hot(labels, num_stocks).float()                                              # (B,) labels -> (B, num_stocks) switches
+    onehot = onehot[:, None, :].expand(-1, x.shape[1], -1)    # copy them to every time step -> (B, T, num_stocks)
+    return torch.cat([x, onehot], dim=-1)                                                # glue onto x along the LAST axis
 
 # ---------------------------------------------------------------------------
 # RecurrentBlock - the shared building block
@@ -67,6 +73,11 @@ def count_parameters(model):
 # quick self-test: python modules.py
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    labels = torch.tensor([0, 2, 4])
+    tagged = with_label(torch.randn(3, 500, 41), labels)
+    print("tagged:", tagged.shape)              # expect (3, 500, 46)
+    print("window 1, step 0, switches:", tagged[1, 0, 41:])   # expect GOOG: [0, 0, 1, 0, 0]
+
     block = RecurrentBlock(in_dim=41, hidden_dim=24, out_dim=41, num_layers=3)
     x = torch.randn(128, 60, 41)
     print(block(x).shape)
