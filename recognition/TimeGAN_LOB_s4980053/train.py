@@ -17,7 +17,7 @@ from utils import collect, invalid_rates, per_stock_report, windows_to_books
 BASELINE_EPOCHS = 50   # baseline GAN: settles by ~epoch 25
 AE_EPOCHS = 100        # TimeGAN phase 1
 SUP_EPOCHS = 500       # TimeGAN phase 2
-JOINT_EPOCHS = 50      # TimeGAN phase 3
+JOINT_EPOCHS = 100      # TimeGAN phase 3
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
 SEQ_LEN = 500
