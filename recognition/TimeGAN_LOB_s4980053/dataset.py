@@ -104,17 +104,18 @@ def normalise(train, val, test):
 class LOBWindows(Dataset):
     """Cuts a (rows, 41) array into windows of seq_len consecutive rows."""
 
-    def __init__(self, data, seq_len=60, stride=1):
+    def __init__(self, data, seq_len=60, stride=1, stock_id=0):
         self.data = torch.tensor(data, dtype=torch.float32)
         self.seq_len = seq_len
         self.starts = range(0, len(data) - seq_len + 1, stride)
+        self.stock_id = stock_id
 
     def __len__(self):
         return len(self.starts)
     
     def __getitem__(self, i):
         start = self.starts[i]
-        return self.data[start:start + self.seq_len]
+        return self.data[start:start + self.seq_len], self.stock_id
 
 def decode(features, mean, std, start_mid):
 #   goal: the exact reverse of normalise + encode -> back to a (T, 40) order book
@@ -161,8 +162,7 @@ if __name__ == "__main__":
         dummies = (np.abs(book) >= 9999999999).sum()
         print(ticker, "| events:", len(book), "| rule breaks:", check_rules(book), "| dummy levels:", dummies)
 
-    book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
-    msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
+    book_file, msg_file = stock_files("AMZN")
 
     times, book = load_lobster(book_file, msg_file)
     print("events:", len(times), "| book shape:", book.shape)
@@ -191,11 +191,13 @@ if __name__ == "__main__":
     print("windows (train / val / test):", len(train_ds), len(val_ds), len(test_ds))
 
     loader = DataLoader(train_ds, batch_size=128, shuffle=True)
-    print("one batch:", next(iter(loader)).shape)
+    windows, labels = next(iter(loader))                                    # CHANGED: a batch is now a pair
+    print("one batch:", windows.shape, "| labels:", labels[:5])
 
     train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file)
-    print("make_loaders batch:", next(iter(train_loader)).shape)    # expect (128, 60, 41)
+    windows, labels = next(iter(train_loader))                              # CHANGED: same here
+    print("make_loaders batch:", windows.shape, "| labels:", labels[:5])
 
-    start_mid = (snapshots[0, 0] + snapshots[0, 2]) / 2          # mid of the very first snapshot
+    start_mid = (snapshots[0, 0] + snapshots[0, 2]) / 2
     rebuilt = decode((features - mean) / std, mean, std, start_mid)
     print("round-trip max error:", np.abs(rebuilt - snapshots[1:]).max())
