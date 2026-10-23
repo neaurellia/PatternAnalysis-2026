@@ -1,5 +1,5 @@
 # train.py - training and saving the baseline GAN and TimeGAN
-
+import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -24,8 +24,8 @@ HIDDEN_DIM = 24        # GRU memory size
 NUM_LAYERS = 3
 SEED = 42              # fixed randomness, so a run can be repeated exactly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
-SMOKE_TEST = True      # True: 1 epoch, 5 batches, just to check it runs. False: real training.
-MODEL = "timegan"      # "baseline" or "timegan"
+SMOKE_TEST = os.environ.get("SMOKE_TEST", "1") == "1"   # default: smoke test. Real run: submit with SMOKE_TEST=0
+MODEL = os.environ.get("MODEL", "timegan")              # "baseline" or "timegan", chosen when submitting
 
 # ---------------------------------------------------------------------------
 # training loop
