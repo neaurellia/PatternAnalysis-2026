@@ -20,7 +20,7 @@ AE_EPOCHS = 200        # TimeGAN phase 1: still improving at 50, much better at 
 SUP_EPOCHS = 200       # TimeGAN phase 2
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
-SEQ_LEN = 60
+SEQ_LEN = 500
 HIDDEN_DIM = 24        # GRU memory size
 NUM_LAYERS = 3
 SEED = 42              # fixed randomness, so a run can be repeated exactly
@@ -38,7 +38,7 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
 
     for epoch in range(1, epochs + 1):
         d_total, g_total, n = 0.0, 0.0, 0
-        for real_window in loader:
+        for real_window, stock in loader:
             real_window = real_window.to(device)
             noise = model.sample_noise(real_window.shape[0], real_window.shape[1], device)
             fake = model.generator(noise)
@@ -86,7 +86,7 @@ def train_autoencoder(model, loader, epochs, lr, device, max_batches=None):
 
     for epoch in range(1, epochs + 1):
         total, n = 0.0, 0
-        for real in loader:
+        for real, stock in loader:
             real = real.to(device)
             rebuilt = model.reconstruct(real)                           # zip + unzip (your new method)
             loss = F.mse_loss(rebuilt, real)        # mean squared error
@@ -111,7 +111,7 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
 
     for epoch in range(1, epochs + 1):
         total, n = 0.0, 0
-        for real in loader:
+        for real, stock in loader:
             real = real.to(device)
             with torch.no_grad():                      # frozen: no trace into the embedder
                 codes = model.embedder(real)                            # zip the real window
@@ -137,11 +137,9 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
 
 if __name__ == "__main__":
     torch.manual_seed(SEED)
-    book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
-    msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
 
     # data (shared by both models)
-    train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file, SEQ_LEN, BATCH_SIZE)
+    train_loader, val_loader, test_loader, mean, std = make_loaders(seq_len=SEQ_LEN, batch_size=BATCH_SIZE)    
     feature_dim = mean.shape[0]                                # 41: one mean per feature
     max_batches = 5 if SMOKE_TEST else None
 
@@ -173,8 +171,10 @@ if __name__ == "__main__":
         spread, ladder, volume = invalid_rates(books)
         print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
 
-        real = next(iter(test_loader)).numpy()
+        real, _ = next(iter(test_loader))
+        real = real.numpy()
         real_books = windows_to_books(real, mean, std)
+        
         print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
         print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
 
@@ -188,7 +188,8 @@ if __name__ == "__main__":
         print(f"training time: {(time.time() - start) / 60:.1f} min")
 
         # check phase 1 on TEST windows: hours the autoencoder never trained on
-        real = next(iter(test_loader)).to(DEVICE)
+        real, _ = next(iter(test_loader))
+        real = real.to(DEVICE)
         with torch.no_grad():
             rebuilt = model.reconstruct(real)
         print(f"test reconstruction mse: {F.mse_loss(rebuilt, real).item():.4f}")
@@ -202,5 +203,5 @@ if __name__ == "__main__":
             guesses = model.supervisor(codes)
         print(f"test next-step mse: {F.mse_loss(guesses[:, :-1], codes[:, 1:]).item():.2e}")
         print(f"'no change' guess mse: {F.mse_loss(codes[:, :-1], codes[:, 1:]).item():.2e}")
-        
+
         torch.save({"model": model.state_dict(), "mean": mean, "std": std}, "timegan.pt")
