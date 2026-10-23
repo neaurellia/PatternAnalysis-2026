@@ -45,8 +45,8 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
 
             # discriminator catches fakes
             # generator dials → fake, so we fake.detach() → discriminator → fake_scores → d_loss
-            real_scores = model.make_fake(real_window, stock)
-            fake_scores = model.make_fake(fake.detach(), stock)
+            real_scores = model.judge(real_window, stock)
+            fake_scores = model.judge(fake.detach(), stock)
             d_loss = F.binary_cross_entropy_with_logits(real_scores, torch.ones_like(real_scores)) \
                    + F.binary_cross_entropy_with_logits(fake_scores, torch.zeros_like(fake_scores))
             d_opt.zero_grad() 
@@ -55,7 +55,7 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
 
             # generator's turn: fool the discriminator
             # generator dials → fake → discriminator → g_scores → g_loss -> loop backward() to generator dials
-            g_scores = model.make_fake(fake, stock)  # NOT detached: the trace must reach the generator
+            g_scores = model.judge(fake, stock)  # NOT detached: the trace must reach the generator
             g_loss = F.binary_cross_entropy_with_logits(g_scores, torch.ones_like(g_scores))                          # g_scores vs target 1
             g_opt.zero_grad()
             g_loss.backward()
@@ -113,9 +113,10 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
         total, n = 0.0, 0
         for real, stock in loader:
             real = real.to(device)
+            stock = stock.to(device)
             with torch.no_grad():                      # frozen: no trace into the embedder
                 codes = model.embedder(real)                            # zip the real window
-            guesses = model.supervisor(codes)                              # supervisor on the codes
+            guesses = model.supervise(codes, stock)                              # supervisor on the codes
             loss = F.mse_loss(guesses[:, :-1], codes[:, 1:])   # guess for t+1 vs the real code at t+1
             opt.zero_grad()
             loss.backward()
@@ -181,8 +182,9 @@ if __name__ == "__main__":
         print(f"training time: {(time.time() - start) / 60:.1f} min")
 
         # check phase 1 on TEST windows: hours the autoencoder never trained on
-        real, _ = next(iter(test_loader))
+        real, stock = next(iter(test_loader))
         real = real.to(DEVICE)
+        stock = stock.to(DEVICE)
         with torch.no_grad():
             rebuilt = model.reconstruct(real)
         print(f"test reconstruction mse: {F.mse_loss(rebuilt, real).item():.4f}")
@@ -193,7 +195,7 @@ if __name__ == "__main__":
         # check phase 2 on TEST windows
         with torch.no_grad():
             codes = model.embedder(real)
-            guesses = model.supervisor(codes)
+            guesses = model.supervise(codes, stock)
         print(f"test next-step mse: {F.mse_loss(guesses[:, :-1], codes[:, 1:]).item():.2e}")
         print(f"'no change' guess mse: {F.mse_loss(codes[:, :-1], codes[:, 1:]).item():.2e}")
 

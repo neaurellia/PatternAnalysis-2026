@@ -58,18 +58,45 @@ class BaselineGAN(nn.Module):
         return self.make_fake(noise, labels)
 
 class TimeGAN(nn.Module):
-    """TimeGAN (Yoon et al., 2019). Part 1: the autoencoder (embedder + recovery) and supervisor for now."""
+    """TimeGAN (Yoon et al., 2019) conditioned on stock: autoencoder, supervisor, generator, discriminator."""
 
-    def __init__(self, feature_dim, hidden_dim, num_layers):
+    def __init__(self, feature_dim, hidden_dim, num_layers, num_stocks=5):
         super().__init__()
+        self.noise_dim = feature_dim
+        self.num_stocks = num_stocks
         self.embedder = RecurrentBlock(feature_dim, hidden_dim, hidden_dim, num_layers, sigmoid=True)     # zip:   feature_dim in -> hidden_dim out, WITH sigmoid
         self.recovery = RecurrentBlock(hidden_dim, hidden_dim, feature_dim, num_layers)     # unzip: hidden_dim in -> feature_dim out, no sigmoid
-        self.supervisor = RecurrentBlock(hidden_dim, hidden_dim, hidden_dim, num_layers, sigmoid=True)
+        self.supervisor = RecurrentBlock(hidden_dim + num_stocks, hidden_dim, hidden_dim, num_layers, sigmoid=True)    # code + switches
+        self.generator = RecurrentBlock(self.noise_dim + num_stocks, hidden_dim, hidden_dim, num_layers, sigmoid=True) # noise + switches
+        self.discriminator = RecurrentBlock(hidden_dim + num_stocks, hidden_dim, 1, num_layers)                        # code + switches
 
     def reconstruct(self, x):
         """Zip then unzip a real window. Used to train phase 1."""
         code = self.embedder(x)
         return self.recovery(code)              # x -> embedder -> recovery
+
+    def supervise(self, codes, labels):
+        """Codes + stock -> guess of each next code."""
+        return self.supervisor(with_label(codes, labels, self.num_stocks))
+
+    def make_codes(self, noise, labels):
+        """Noise + stock -> fake codes."""
+        return self.generator(with_label(noise, labels, self.num_stocks))
+
+    def judge(self, codes, labels):
+        """Codes + stock -> real/fake score per step."""
+        return self.discriminator(with_label(codes, labels, self.num_stocks))
+
+    def sample_noise(self, batch_size, seq_len, device):
+        return torch.randn(batch_size, seq_len, self.noise_dim, device=device)
+
+    @torch.no_grad()
+    def generate(self, labels, seq_len, device):
+        """Noise -> generator -> supervisor -> recovery: one fake window per label."""
+        noise = self.sample_noise(len(labels), seq_len, device)
+        codes = self.make_codes(noise, labels)                      # fake codes for these stocks
+        codes = self.supervise(codes, labels)                      # supervisor makes them move realistically, per stock
+        return self.recovery(codes)
 
 def count_parameters(model):
     """Number of trainable weights in a model."""
@@ -104,8 +131,9 @@ if __name__ == "__main__":
 
     tg = TimeGAN(feature_dim=41, hidden_dim=24, num_layers=3)
     print("reconstruction:", tg.reconstruct(x).shape)                   # expect (128, 60, 41)
-    print("autoencoder parameters:", count_parameters(tg))
-
-    codes = tg.embedder(x)                # real-ish window -> zip files
-    print("codes:", codes.shape)              
-    print("supervisor:", tg.supervisor(codes).shape)   # expect (128, 60, 24): one guess per step
+    codes = tg.embedder(x)
+    labels = torch.randint(0, 5, (128,))                           # a random stock for each window
+    print("supervisor:", tg.supervise(codes, labels).shape)        # expect (128, 60, 24)
+    print("judge:", tg.judge(codes, labels).shape)                 # expect (128, 60, 1)
+    print("TimeGAN fake:", tg.generate(stock, 60, "cpu").shape)    # expect (8, 60, 41)
+    print("TimeGAN parameters (all five):", count_parameters(tg))
