@@ -40,13 +40,14 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
         d_total, g_total, n = 0.0, 0.0, 0
         for real_window, stock in loader:
             real_window = real_window.to(device)
+            stock = stock.to(device)
             noise = model.sample_noise(real_window.shape[0], real_window.shape[1], device)
-            fake = model.generator(noise)
+            fake = model.make_fake(noise, stock)
 
             # discriminator catches fakes
             # generator dials → fake, so we fake.detach() → discriminator → fake_scores → d_loss
-            real_scores = model.discriminator(real_window)
-            fake_scores = model.discriminator(fake.detach())
+            real_scores = model.make_fake(real_window, stock)
+            fake_scores = model.make_fake(fake.detach(), stock)
             d_loss = F.binary_cross_entropy_with_logits(real_scores, torch.ones_like(real_scores)) \
                    + F.binary_cross_entropy_with_logits(fake_scores, torch.zeros_like(fake_scores))
             d_opt.zero_grad() 
@@ -55,7 +56,7 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
 
             # generator's turn: fool the discriminator
             # generator dials → fake → discriminator → g_scores → g_loss -> loop backward() to generator dials
-            g_scores = model.discriminator(fake)  # NOT detached: the trace must reach the generator
+            g_scores = model.make_fake(fake, stock)  # NOT detached: the trace must reach the generator
             g_loss = F.binary_cross_entropy_with_logits(g_scores, torch.ones_like(g_scores))                          # g_scores vs target 1
             g_opt.zero_grad()
             g_loss.backward()
@@ -166,7 +167,8 @@ if __name__ == "__main__":
         if DEVICE == "cuda":
             print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
 
-        fake = model.generate(1000, SEQ_LEN, DEVICE).cpu().numpy()
+        labels = torch.arange(1000) % 5                                 # 200 windows of each stock
+        fake = model.generate(labels.to(DEVICE), SEQ_LEN, DEVICE).cpu().numpy()        
         books = windows_to_books(fake, mean, std)
         spread, ladder, volume = invalid_rates(books)
         print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
