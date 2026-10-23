@@ -2,6 +2,7 @@
 # (all of these work on DECODED books, not on normalised features)
 
 import numpy as np
+import torch
 
 from dataset import check_rules, decode
 
@@ -37,14 +38,32 @@ def volatility_clustering(books):
     nxt = moves[:, 1:].ravel()                                 # every move except the first
     return np.corrcoef(now, nxt)[0, 1]
 
+def collect(loader):
+    """Every (window, label) in a loader -> windows (N, T, 41) and labels (N,) as numpy."""
+    windows, labels = [], []
+    for w, s in loader:
+        windows.append(w)
+        labels.append(s)
+    return torch.cat(windows).numpy(), torch.cat(labels).numpy()
+
+def per_stock_report(real_w, real_l, fake_w, fake_l, mean, std, tickers):
+    """Print rule breaks, VWAP offset and volatility clustering for each stock, real vs fake."""
+    for stock_id, ticker in enumerate(tickers):
+        real_books = windows_to_books(real_w[real_l == stock_id], mean, std)
+        fake_books = windows_to_books(fake_w[fake_l == stock_id], mean, std)                       # same, for the fake windows of this stock
+        spread, ladder, volume = invalid_rates(fake_books)
+        r_mean, r_std = vwap_stats(real_books)
+        f_mean, f_std = vwap_stats(fake_books)
+        print(f"{ticker} | broken ladder {ladder:.1%} | VWAP real {r_mean:.2f}±{r_std:.2f} "
+              f"fake {f_mean:.2f}±{f_std:.2f} | clustering real {volatility_clustering(real_books):.3f} "
+              f"fake {volatility_clustering(fake_books):.3f}")
+
 # TODO: spreads and returns
 #   goal: pull the two quantities the spec's KL targets are about out of a set of books
 
 # TODO: kl_divergence
 #   goal: one number for how different two histograms are (target <= 0.1)
 #   think: both histograms must use the same bins - why?
-
-#   goal: do big moves follow big moves? one number, compare real vs fake
 
 # TODO: real-vs-real reference
 #   goal: score real training-hour windows against the test hour with the same metrics

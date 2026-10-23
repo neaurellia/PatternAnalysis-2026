@@ -7,10 +7,9 @@ import torch
 import torch.nn.functional as F
 import time
 
-from dataset import make_loaders
+from dataset import make_loaders, TICKERS
 from modules import BaselineGAN, TimeGAN, count_parameters
-from utils import invalid_rates, windows_to_books, vwap_stats, volatility_clustering
-
+from utils import collect, invalid_rates, per_stock_report, windows_to_books
 # ---------------------------------------------------------------------------
 # settings
 # ---------------------------------------------------------------------------
@@ -167,18 +166,10 @@ if __name__ == "__main__":
         if DEVICE == "cuda":
             print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
 
-        labels = torch.arange(1000) % 5                                 # 200 windows of each stock
-        fake = model.generate(labels.to(DEVICE), SEQ_LEN, DEVICE).cpu().numpy()        
-        books = windows_to_books(fake, mean, std)
-        spread, ladder, volume = invalid_rates(books)
-        print(f"broken books - spread: {spread:.1%}  ladder: {ladder:.1%}  volume: {volume:.1%}")
-
-        real, _ = next(iter(test_loader))
-        real = real.numpy()
-        real_books = windows_to_books(real, mean, std)
-        
-        print("VWAP offset (mean, std) - real:", vwap_stats(real_books), " fake:", vwap_stats(books))
-        print(f"volatility clustering - real: {volatility_clustering(real_books):.3f}  fake: {volatility_clustering(books):.3f}")
+        real_w, real_l = collect(test_loader)                           # all 315 test windows
+        fake_l = torch.arange(1000) % 5                                 # 200 fake windows per stock
+        fake_w = model.generate(fake_l.to(DEVICE), SEQ_LEN, DEVICE).cpu().numpy()
+        per_stock_report(real_w, real_l, fake_w, fake_l.numpy(), mean, std, TICKERS)
 
     else:
         model = TimeGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)                                      
