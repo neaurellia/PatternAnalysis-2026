@@ -34,19 +34,28 @@ class RecurrentBlock(nn.Module):
 # ---------------------------------------------------------------------------
 
 class BaselineGAN(nn.Module):
-    def __init__(self, feature_dim, hidden_dim, num_layers):
+    def __init__(self, feature_dim, hidden_dim, num_layers, num_stocks=5):
         super().__init__()
         self.noise_dim = feature_dim
-        self.generator = RecurrentBlock(self.noise_dim, hidden_dim, feature_dim, num_layers)
-        self.discriminator = RecurrentBlock(feature_dim, hidden_dim, 1, num_layers)
+        self.num_stocks = num_stocks
+        self.generator = RecurrentBlock(self.noise_dim + num_stocks, hidden_dim, feature_dim, num_layers)
+        self.discriminator = RecurrentBlock(feature_dim + num_stocks, hidden_dim, 1, num_layers)
 
     def sample_noise(self, batch_size, seq_len, device):
         return torch.randn(batch_size, seq_len, self.noise_dim, device=device)
 
+    def make_fake(self, noise, labels):
+        """Noise + stock label -> fake windows."""
+        return self.generator(with_label(noise, labels, self.num_stocks))
+    
+    def judge(self, x, labels):
+        """Window + stock label -> real/fake score per step."""
+        return self.discriminator(with_label(x, labels, self.num_stocks))
+        
     @torch.no_grad()
-    def generate(self, batch_size, seq_len, device):
-        noise = self.sample_noise(batch_size, seq_len, device)
-        return self.generator(noise)
+    def generate(self, labels, seq_len, device):
+        noise = self.sample_noise(len(labels), seq_len, device)
+        return self.make_fake(noise, labels)
 
 class TimeGAN(nn.Module):
     """TimeGAN (Yoon et al., 2019). Part 1: the autoencoder (embedder + recovery) and supervisor for now."""
@@ -83,9 +92,10 @@ if __name__ == "__main__":
     print(block(x).shape)
 
     gan = BaselineGAN(feature_dim=41, hidden_dim=24, num_layers=3)
-    fake = gan.generate(batch_size=8, seq_len=60, device="cpu")
+    stock = torch.tensor([0, 1, 2, 3, 4, 2, 2, 3])
+    fake = gan.generate(stock, seq_len=60, device="cpu")
     print("fake windows:", fake.shape)                  # expect (8, 60, 41)
-    print("scores:", gan.discriminator(fake).shape)     # expect (8, 60, 1)
+    print("scores:", gan.judge(fake, stock).shape)     # expect (8, 60, 1)
 
     print("parameters: ", count_parameters(gan))
 
