@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 TICKERS = ["AAPL", "AMZN", "GOOG", "INTC", "MSFT"]
 
@@ -139,22 +139,32 @@ def decode(features, mean, std, start_mid):
     book[:, 3::4] = sizes[:, 10:]                       # bid sizes = last 10 columns of sizes
     return book
 
-def make_loaders(book_file, msg_file, seq_len=60, batch_size=128):
-    """Run the whole data chain and return train/val/test DataLoaders plus mean and std."""
-    # 1-5: copy these from your main (no prints)
-    times, book = load_lobster(book_file, msg_file)
-    grid, snapshots = resample(times, book)
-    features = encode(snapshots)
-    train, val, test = split_by_time(grid, features)
-    train, val, test, mean, std = normalise(train, val, test)
+def make_loaders(tickers=TICKERS, seq_len=500, batch_size=128, eval_stride=50):
+    """All stocks -> train/val/test DataLoaders of (window, stock label), plus the shared mean and std."""
+    # stage 1: each stock through the chain separately
+    parts = []                                       # one (train, val, test) per stock
+    for ticker in tickers:
+        times, book = load_lobster(*stock_files(ticker))                            # load this stock (stock_files helps)
+        grid, snapshots = resample(times, book)
+        features = encode(snapshots)
+        parts.append(split_by_time(grid, features))
 
-    # windows -> loaders (only the training loader shuffles)
-    train_loader = DataLoader(LOBWindows(train, seq_len, stride=1), batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(LOBWindows(val, seq_len, stride=seq_len), batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(LOBWindows(test, seq_len, stride=seq_len), batch_size=batch_size, shuffle=False)
+    # stage 2: one shared normaliser from every stock's TRAINING rows
+    all_train = np.concatenate([train for train, val, test in parts])
+    mean = all_train.mean(axis=0) + 1e-8                                       # same as in normalise()
+    std = all_train.std(axis=0) + 1e-8
 
+    # stage 3: windows, labelled with each stock's number
+    train_sets, val_sets, test_sets = [], [], []
+    for stock_id, (train, val, test) in enumerate(parts):
+        train_sets.append(LOBWindows((train - mean) / std, seq_len, stride=1, stock_id=stock_id))
+        val_sets.append(LOBWindows((val - mean) / std, seq_len, stride=eval_stride, stock_id=stock_id))                         # val rows, stride=eval_stride
+        test_sets.append(LOBWindows((test - mean) / std, seq_len, stride=eval_stride, stock_id=stock_id))                        # test rows, stride=eval_stride
+
+    train_loader = DataLoader(ConcatDataset(train_sets), batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(ConcatDataset(val_sets), batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(ConcatDataset(test_sets), batch_size=batch_size, shuffle=False)
     return train_loader, val_loader, test_loader, mean, std
-
 
 if __name__ == "__main__":
     for ticker in TICKERS:
@@ -194,10 +204,11 @@ if __name__ == "__main__":
     windows, labels = next(iter(loader))                                    # CHANGED: a batch is now a pair
     print("one batch:", windows.shape, "| labels:", labels[:5])
 
-    train_loader, val_loader, test_loader, mean, std = make_loaders(book_file, msg_file)
-    windows, labels = next(iter(train_loader))                              # CHANGED: same here
-    print("make_loaders batch:", windows.shape, "| labels:", labels[:5])
-
+    train_loader, val_loader, test_loader, mean, std = make_loaders()
+    print("windows (train / val / test):", len(train_loader.dataset), len(val_loader.dataset), len(test_loader.dataset))
+    windows, labels = next(iter(train_loader))
+    print("5-stock batch:", windows.shape, "| labels:", labels[:10])
+    
     start_mid = (snapshots[0, 0] + snapshots[0, 2]) / 2
     rebuilt = decode((features - mean) / std, mean, std, start_mid)
     print("round-trip max error:", np.abs(rebuilt - snapshots[1:]).max())
