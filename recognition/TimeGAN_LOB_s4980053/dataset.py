@@ -3,6 +3,14 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+TICKERS = ["AAPL", "AMZN", "GOOG", "INTC", "MSFT"]
+
+
+def stock_files(ticker, data_dir="data"):
+    """Paths to one stock's LOBSTER orderbook and message files."""
+    name = f"{data_dir}/{ticker}_2012-06-21_34200000_57600000"
+    return name + "_orderbook_10.csv", name + "_message_10.csv"
+
 def load_lobster(book_path, msg_path):
     """Return times (N,) in seconds after midnight, and book (N, 40)."""
     # read both CSVs 
@@ -148,6 +156,11 @@ def make_loaders(book_file, msg_file, seq_len=60, batch_size=128):
 
 
 if __name__ == "__main__":
+    for ticker in TICKERS:
+        times, book = load_lobster(*stock_files(ticker))
+        dummies = (np.abs(book) >= 9999999999).sum()
+        print(ticker, "| events:", len(book), "| rule breaks:", check_rules(book), "| dummy levels:", dummies)
+
     book_file = "data/AMZN_2012-06-21_34200000_57600000_orderbook_10.csv"
     msg_file = "data/AMZN_2012-06-21_34200000_57600000_message_10.csv"
 
