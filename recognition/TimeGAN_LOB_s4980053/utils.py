@@ -54,11 +54,12 @@ def per_stock_report(real_w, real_l, fake_w, fake_l, mean, std, tickers):
         real_books = windows_to_books(real_w[real_l == stock_id], mean, std)
         fake_books = windows_to_books(fake_w[fake_l == stock_id], mean, std)                       # same, for the fake windows of this stock
         spread, ladder, volume = invalid_rates(fake_books)
+        too_big = (fake_books[..., 1::2] > real_books[..., 1::2].max()).mean()
         r_mean, r_std = vwap_stats(real_books)
         f_mean, f_std = vwap_stats(fake_books)
         print(f"{ticker} | broken ladder {ladder:.1%} | VWAP real {r_mean:.2f}±{r_std:.2f} "
               f"fake {f_mean:.2f}±{f_std:.2f} | clustering real {volatility_clustering(real_books):.3f} "
-              f"fake {volatility_clustering(fake_books):.3f}")
+              f"fake {volatility_clustering(fake_books):.3f} | huge volumes {too_big:.1%}")
 
 # TODO: spreads and returns
 #   goal: pull the two quantities the spec's KL targets are about out of a set of books

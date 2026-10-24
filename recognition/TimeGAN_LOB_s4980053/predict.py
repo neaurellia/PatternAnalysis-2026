@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from dataset import TICKERS, make_loaders
 from modules import BaselineGAN, TimeGAN
 from utils import collect, per_stock_report, vwap_offset, windows_to_books
-
+from matplotlib.animation import FuncAnimation, PillowWriter
 
 def load_model(kind, path, feature_dim=41):
     """Rebuild a saved model. kind is "baseline" or "timegan". Returns the model, mean, std, settings."""
@@ -56,6 +56,35 @@ def plot_vwap_per_stock(real_w, real_l, fake_w, fake_l, mean, std, path):
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
+def make_gif(real_book, fake_book, ticker, path, every=5):
+    """Animated order book, real next to generated: volume per level, in ticks from the mid."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    books = ((axes[0], real_book, "real"), (axes[1], fake_book, "generated"))
+    # one shared scale, taken from the real window only
+    y_top = np.percentile(real_book[:, 1::2], 99) * 1.2                          # real volumes (size columns)
+    real_mid = (real_book[:, 0] + real_book[:, 2]) / 2
+    x_reach = np.abs((real_book[:, 0::2] - real_mid[:, None]) / 100).max() * 1.2   # real prices (price columns)
+
+    def draw(t):
+        for ax, book, name in books:
+            ax.clear()
+            row = book[t]
+            ask_p, ask_s, bid_p, bid_s = row[0::4], row[1::4], row[2::4], row[3::4]
+            mid = (ask_p[0] + bid_p[0]) / 2
+            ax.bar((bid_p - mid) / 100, bid_s, width=0.8, color="tab:blue", label="bids")
+            ax.bar((ask_p - mid) / 100, ask_s, width=0.8, color="tab:red", label="asks")
+            ax.axvline(0, color="black", linestyle="--", label="mid")
+            ax.set_ylim(0, y_top)                                                # same height for both panels
+            ax.set_xlim(-x_reach, x_reach)                                       # same width for both panels
+            ax.set_xlabel("price (ticks from mid)")
+            ax.set_ylabel("volume (shares)")
+            ax.set_title(f"{ticker} {name}, t = {t} s")
+            ax.legend(loc="upper right")
+
+    frames = range(0, len(real_book), every)
+    FuncAnimation(fig, draw, frames=frames).save(path, writer=PillowWriter(fps=10))
+    plt.close(fig)
+
 if __name__ == "__main__":
     kind, path = sys.argv[1], sys.argv[2]          # e.g. python predict.py baseline baseline_trained.pt
     model, mean, std, settings = load_model(kind, path)
@@ -69,3 +98,8 @@ if __name__ == "__main__":
 
     plot_vwap_over_time(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{kind}_vwap_over_time.png")
     plot_vwap_per_stock(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{kind}_vwap_per_stock.png")
+
+    for stock_id, ticker in enumerate(TICKERS):
+        real_book = windows_to_books(real_w[real_l == stock_id][:1], mean, std)[0]
+        fake_book = windows_to_books(fake_w[fake_l.numpy() == stock_id][:1], mean, std)[0]
+        make_gif(real_book, fake_book, ticker, f"{kind}_{ticker}.gif")
