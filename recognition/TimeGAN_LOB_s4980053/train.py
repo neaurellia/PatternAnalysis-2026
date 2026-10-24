@@ -27,12 +27,12 @@ SEED = 42              # fixed randomness, so a run can be repeated exactly
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
 SMOKE_TEST = os.environ.get("SMOKE_TEST", "1") == "1"   # default: smoke test. Real run: submit with SMOKE_TEST=0
 MODEL = os.environ.get("MODEL", "timegan")              # "baseline" or "timegan", chosen when submitting
+PENALTY = float(os.environ.get("PENALTY", "0"))          # weight of the rule penalty; 0 = off (submit with PENALTY=1 to turn on)
 
 def bce(scores, real):
     """Binary cross-entropy against an all-'real' (1) or all-'fake' (0) target."""
     target = torch.ones_like(scores) if real else torch.zeros_like(scores)
     return F.binary_cross_entropy_with_logits(scores, target)
-
 
 def moment_loss(fake, real):
     """How far the fake batch's average and spread are from the real batch's (per time step and feature)."""
@@ -40,10 +40,22 @@ def moment_loss(fake, real):
     std_gap = (torch.sqrt(fake.var(dim=0) + 1e-6) - torch.sqrt(real.var(dim=0) + 1e-6)).abs().mean()
     return mean_gap + std_gap
 
+def rule_penalty(fake, mean_t, std_t, max_log_size):
+    """How badly generated windows break the book's rules, as a number the generator can learn from.
+    0 when every rule holds; grows with how far (in ticks / log-shares) each rule is broken."""
+    x = fake * std_t + mean_t                                          # undo the normalisation (torch tensors, same formula as decode)
+    ask_off, bid_off, log_sizes = x[..., 1:11], x[..., 11:21], x[..., 21:41]
+
+    spread = torch.relu(1 - (ask_off[..., 0] - bid_off[..., 0])).mean()     # best ask must sit >= 1 tick above best bid
+    ask_ladder = torch.relu(1 - (ask_off[..., 1:] - ask_off[..., :-1])).mean()   # each ask level >= 1 tick above the last
+    bid_ladder = torch.relu(1 - (bid_off[..., :-1] + bid_off[..., 1:])).mean()                                # mirror: each bid level >= 1 tick BELOW the last
+    volume = torch.relu(log_sizes - max_log_size).mean()                    # no log size above the real maximum
+    return spread + ask_ladder + bid_ladder + volume
+
 # ---------------------------------------------------------------------------
 # training loop
 # ---------------------------------------------------------------------------
-def train_baseline(model, loader, epochs, lr, device, max_batches=None):
+def train_baseline(model, loader, epochs, lr, device, max_batches=None, penalty=None):
     g_opt = torch.optim.Adam(model.generator.parameters(), lr=lr)
     d_opt = torch.optim.Adam(model.discriminator.parameters(), lr=lr)
     history = {"d_loss": [], "g_loss": []}
@@ -70,6 +82,8 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None):
             # generator dials → fake → discriminator → g_scores → g_loss -> loop backward() to generator dials
             g_scores = model.judge(fake, stock)  # NOT detached: the trace must reach the generator
             g_loss = F.binary_cross_entropy_with_logits(g_scores, torch.ones_like(g_scores))                          # g_scores vs target 1
+            if penalty is not None:
+                g_loss = g_loss + penalty(fake)                       # punish broken books
             g_opt.zero_grad()
             g_loss.backward()
             g_opt.step()
@@ -145,7 +159,7 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
 
     return history
 
-def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0):
+def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0, penalty=None):
     """TimeGAN phase 3: generator, supervisor, zip tool and discriminator train together."""
     g_params = list(model.generator.parameters()) + list(model.supervisor.parameters())
     e_params = list(model.embedder.parameters()) + list(model.recovery.parameters())
@@ -170,6 +184,8 @@ def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0):
                 adv = bce(model.judge(fake, stock), True) + gamma * bce(model.judge(fake_raw, stock), True)
                 sup = F.mse_loss(model.supervise(real_codes, stock)[:, :-1], real_codes[:, 1:])
                 g_loss = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moment_loss(fake_windows, real)
+                if penalty is not None:
+                    g_loss = g_loss + penalty(fake_windows)           # punish broken books
                 g_opt.zero_grad()
                 g_loss.backward()
                 torch.nn.utils.clip_grad_norm_(g_params, 1.0)                # cap the update size (NaN safety)
@@ -226,24 +242,32 @@ if __name__ == "__main__":
     feature_dim = mean.shape[0]                                # 41: one mean per feature
     max_batches = 5 if SMOKE_TEST else None
 
+    # rule penalty (off unless PENALTY > 0): needs mean/std as tensors and the largest real log size
+    mean_t = torch.tensor(mean, dtype=torch.float32, device=DEVICE)
+    std_t = torch.tensor(std, dtype=torch.float32, device=DEVICE)
+    train_rows = torch.cat([d.data for d in train_loader.dataset.datasets]).numpy()   # every normalised training row
+    max_log_size = float((train_rows[:, 21:41] * std[21:41] + mean[21:41]).max())    # biggest real log size
+    penalty = (lambda w: PENALTY * rule_penalty(w, mean_t, std_t, max_log_size)) if PENALTY > 0 else None
+    suffix = "_penalty" if PENALTY > 0 else ""                                         # keep penalty runs' files separate
+
     if MODEL == "baseline":
         model = BaselineGAN(feature_dim, HIDDEN_DIM, NUM_LAYERS).to(DEVICE)
         print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
 
         start = time.time()
-        history = train_baseline(model, train_loader, 1 if SMOKE_TEST else BASELINE_EPOCHS, LR, DEVICE, max_batches)
+        history = train_baseline(model, train_loader, 1 if SMOKE_TEST else BASELINE_EPOCHS, LR, DEVICE, max_batches, penalty=penalty)
         minutes = (time.time() - start) / 60
 
         torch.save({"model": model.state_dict(), "mean": mean, "std": std,
                     "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                   "baseline.pt")
+                   "baseline{suffix}.pt")
 
         plt.plot(history["d_loss"], label="discriminator")
         plt.plot(history["g_loss"], label="generator")
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
-        plt.savefig("baseline_losses.png", dpi=150)
+        plt.savefig("baseline_losses{suffix}.png", dpi=150)
 
         print(f"training time: {minutes:.1f} min")
         if DEVICE == "cuda":
@@ -264,8 +288,8 @@ if __name__ == "__main__":
         # save after phase 2, so a failure in phase 3 never loses phases 1-2
         torch.save({"model": model.state_dict(), "mean": mean, "std": std,
                     "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                   "timegan_phase2.pt")
-        joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE, max_batches)   # NEW: phase 3
+                   "timegan_phase2{suffix}.pt")
+        joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE, max_batches, penalty=penalty)   # NEW: phase 3
         print(f"training time: {(time.time() - start) / 60:.1f} min")
         if DEVICE == "cuda":                                                                                       # NEW: criterion 5
             print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
@@ -273,7 +297,7 @@ if __name__ == "__main__":
         # NEW: save the model, plus the settings predict.py will need to rebuild it
         torch.save({"model": model.state_dict(), "mean": mean, "std": std,
                     "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                "timegan.pt")
+                "timegan{suffix}.pt")
 
         # NEW: phase 3 loss curves
         plt.figure()
@@ -282,7 +306,7 @@ if __name__ == "__main__":
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
-        plt.savefig("timegan_losses.png", dpi=150)
+        plt.savefig("timegan_losses{suffix}.png", dpi=150)
 
         # check phase 1 on TEST windows: hours the autoencoder never trained on
         real, stock = next(iter(test_loader))
