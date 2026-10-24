@@ -16,7 +16,7 @@ from utils import collect, invalid_rates, per_stock_report, windows_to_books
 
 BASELINE_EPOCHS = 50   # baseline GAN: settles by ~epoch 25
 AE_EPOCHS = 100        # TimeGAN phase 1
-SUP_EPOCHS = 500       # TimeGAN phase 2
+SUP_EPOCHS = 100       # TimeGAN phase 2: already 0.0006 next-step error; 500 added an hour for little gain
 JOINT_EPOCHS = 100      # TimeGAN phase 3
 LR = 1e-3              # learning rate: how big each dial turn is (TimeGAN's paper uses 1e-3)
 BATCH_SIZE = 128
@@ -37,7 +37,7 @@ def bce(scores, real):
 def moment_loss(fake, real):
     """How far the fake batch's average and spread are from the real batch's (per time step and feature)."""
     mean_gap = (fake.mean(dim=0) - real.mean(dim=0)).abs().mean()
-    std_gap = (fake.std(dim=0) - real.std(dim=0)).abs().mean()
+    std_gap = (torch.sqrt(fake.var(dim=0) + 1e-6) - torch.sqrt(real.var(dim=0) + 1e-6)).abs().mean()
     return mean_gap + std_gap
 
 # ---------------------------------------------------------------------------
@@ -147,8 +147,10 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
 
 def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0):
     """TimeGAN phase 3: generator, supervisor, zip tool and discriminator train together."""
-    g_opt = torch.optim.Adam(list(model.generator.parameters()) + list(model.supervisor.parameters()), lr=lr)
-    e_opt = torch.optim.Adam(list(model.embedder.parameters()) + list(model.recovery.parameters()), lr=lr)
+    g_params = list(model.generator.parameters()) + list(model.supervisor.parameters())
+    e_params = list(model.embedder.parameters()) + list(model.recovery.parameters())
+    g_opt = torch.optim.Adam(g_params, lr=lr)
+    e_opt = torch.optim.Adam(e_params, lr=lr)
     d_opt = torch.optim.Adam(model.discriminator.parameters(), lr=lr)
     history = {"g_loss": [], "e_loss": [], "d_loss": []}
 
@@ -167,18 +169,20 @@ def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0):
                 real_codes = model.embedder(real)
                 adv = bce(model.judge(fake, stock), True) + gamma * bce(model.judge(fake_raw, stock), True)
                 sup = F.mse_loss(model.supervise(real_codes, stock)[:, :-1], real_codes[:, 1:])
-                g_loss = adv + 100 * torch.sqrt(sup) + 100 * moment_loss(fake_windows, real)    # moment loss between fake_windows and real
+                g_loss = adv + 100 * torch.sqrt(sup + 1e-8) + 100 * moment_loss(fake_windows, real)
                 g_opt.zero_grad()
                 g_loss.backward()
-                g_opt.step()                                                 # g_opt: step
+                torch.nn.utils.clip_grad_norm_(g_params, 1.0)                # cap the update size (NaN safety)
+                g_opt.step()
 
                 # --- turn 2: "zip tool" ---
                 real_codes = model.embedder(real)
                 recon = F.mse_loss(model.recovery(real_codes), real)                                         # mse between recovery(real_codes) and real
                 sup = F.mse_loss(model.supervise(real_codes, stock)[:, :-1], real_codes[:, 1:])
-                e_loss = 10 * torch.sqrt(recon) + 0.1 * sup
+                e_loss = 10 * torch.sqrt(recon + 1e-8) + 0.1 * sup
                 e_opt.zero_grad()
                 e_loss.backward()
+                torch.nn.utils.clip_grad_norm_(e_params, 1.0)                # cap the update size (NaN safety)
                 e_opt.step()
 
             # --- turn 3: discriminator (once per batch) ---
@@ -191,13 +195,17 @@ def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0):
             if d_loss.item() > 0.15:                                # skip if already winning
                 d_opt.zero_grad()
                 d_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.discriminator.parameters(), 1.0)   # cap the update size (NaN safety)
                 d_opt.step()
 
             g_total += g_loss.item()
             e_total += e_loss.item()
             d_total += d_loss.item()
             n += 1
-            if max_batches is not None and n == max_batches:
+            if not torch.isfinite(g_loss + e_loss + d_loss):
+                raise RuntimeError(f"NaN/inf loss at joint epoch {epoch}, batch {n}")
+            
+            elif max_batches is not None and n == max_batches:
                 break
 
         for key, total in (("g_loss", g_total), ("e_loss", e_total), ("d_loss", d_total)):
@@ -253,6 +261,10 @@ if __name__ == "__main__":
         start = time.time()
         ae_history = train_autoencoder(model, train_loader, 1 if SMOKE_TEST else AE_EPOCHS, LR, DEVICE, max_batches)
         supervisor_history = train_supervisor(model, train_loader, 1 if SMOKE_TEST else SUP_EPOCHS, LR, DEVICE, max_batches)
+        # save after phase 2, so a failure in phase 3 never loses phases 1-2
+        torch.save({"model": model.state_dict(), "mean": mean, "std": std,
+                    "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
+                   "timegan_phase2.pt")
         joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE, max_batches)   # NEW: phase 3
         print(f"training time: {(time.time() - start) / 60:.1f} min")
         if DEVICE == "cuda":                                                                                       # NEW: criterion 5

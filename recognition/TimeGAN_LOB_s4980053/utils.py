@@ -48,6 +48,8 @@ def collect(loader):
 
 def per_stock_report(real_w, real_l, fake_w, fake_l, mean, std, tickers):
     """Print rule breaks, VWAP offset and volatility clustering for each stock, real vs fake."""
+    if np.isnan(fake_w).any():
+        print("GENERATED WINDOWS CONTAIN NAN")
     for stock_id, ticker in enumerate(tickers):
         real_books = windows_to_books(real_w[real_l == stock_id], mean, std)
         fake_books = windows_to_books(fake_w[fake_l == stock_id], mean, std)                       # same, for the fake windows of this stock
