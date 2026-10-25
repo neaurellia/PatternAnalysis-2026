@@ -28,6 +28,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"    # GPU if there is one
 SMOKE_TEST = os.environ.get("SMOKE_TEST", "1") == "1"   # default: smoke test. Real run: submit with SMOKE_TEST=0
 MODEL = os.environ.get("MODEL", "timegan")              # "baseline" or "timegan", chosen when submitting
 PENALTY = float(os.environ.get("PENALTY", "0"))          # weight of the rule penalty; 0 = off (submit with PENALTY=1 to turn on)
+RESUME = os.environ.get("RESUME", "")                    # e.g. timegan_phase2.pt: skip phases 1-2 and start phase 3 from it
 
 def bce(scores, real):
     """Binary cross-entropy against an all-'real' (1) or all-'fake' (0) target."""
@@ -159,7 +160,7 @@ def train_supervisor(model, loader, epochs, lr, device, max_batches=None):
 
     return history
 
-def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0, penalty=None):
+def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0, penalty=None, save_fn=None):
     """TimeGAN phase 3: generator, supervisor, zip tool and discriminator train together."""
     g_params = list(model.generator.parameters()) + list(model.supervisor.parameters())
     e_params = list(model.embedder.parameters()) + list(model.recovery.parameters())
@@ -227,6 +228,8 @@ def train_joint(model, loader, epochs, lr, device, max_batches=None, gamma=1.0, 
         for key, total in (("g_loss", g_total), ("e_loss", e_total), ("d_loss", d_total)):
             history[key].append(total / n)
         print(f"[joint] epoch {epoch}/{epochs}  g {g_total / n:.4f}  e {e_total / n:.4f}  d {d_total / n:.4f}")
+        if save_fn is not None and epoch % 10 == 0:
+            save_fn(f"ep{epoch}")                    # keep a copy every 10 epochs, so the best one can be picked later
 
     return history
 
@@ -283,21 +286,26 @@ if __name__ == "__main__":
         print(f"device: {DEVICE} | parameters: {count_parameters(model)}")
 
         start = time.time()
-        ae_history = train_autoencoder(model, train_loader, 1 if SMOKE_TEST else AE_EPOCHS, LR, DEVICE, max_batches)
-        supervisor_history = train_supervisor(model, train_loader, 1 if SMOKE_TEST else SUP_EPOCHS, LR, DEVICE, max_batches)
-        # save after phase 2, so a failure in phase 3 never loses phases 1-2
-        torch.save({"model": model.state_dict(), "mean": mean, "std": std,
-                    "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                   "timegan_phase2{suffix}.pt")
-        joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE, max_batches, penalty=penalty)   # NEW: phase 3
+        def save(tag):
+            """Save the model + everything predict.py needs, as timegan{suffix}_{tag}.pt."""
+            torch.save({"model": model.state_dict(), "mean": mean, "std": std,
+                        "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
+                       f"timegan{suffix}_{tag}.pt")
+
+        if RESUME:
+            model.load_state_dict(torch.load(RESUME, map_location=DEVICE, weights_only=False)["model"])
+            print(f"resumed from {RESUME}: skipping phases 1-2")
+        else:
+            ae_history = train_autoencoder(model, train_loader, 1 if SMOKE_TEST else AE_EPOCHS, LR, DEVICE, max_batches)
+            supervisor_history = train_supervisor(model, train_loader, 1 if SMOKE_TEST else SUP_EPOCHS, LR, DEVICE, max_batches)
+            save("phase2")
+        joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE,
+                                    max_batches, penalty=penalty, save_fn=save)
         print(f"training time: {(time.time() - start) / 60:.1f} min")
         if DEVICE == "cuda":                                                                                       # NEW: criterion 5
             print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
 
-        # NEW: save the model, plus the settings predict.py will need to rebuild it
-        torch.save({"model": model.state_dict(), "mean": mean, "std": std,
-                    "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                "timegan{suffix}.pt")
+        save("final")
 
         # NEW: phase 3 loss curves
         plt.figure()
