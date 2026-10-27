@@ -263,14 +263,14 @@ if __name__ == "__main__":
 
         torch.save({"model": model.state_dict(), "mean": mean, "std": std,
                     "settings": {"hidden_dim": HIDDEN_DIM, "num_layers": NUM_LAYERS, "seq_len": SEQ_LEN}},
-                   "baseline{suffix}.pt")
+                   f"baseline{suffix}.pt")
 
         plt.plot(history["d_loss"], label="discriminator")
         plt.plot(history["g_loss"], label="generator")
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
-        plt.savefig("baseline_losses{suffix}.png", dpi=150)
+        plt.savefig(f"baseline_losses{suffix}.png", dpi=150)
 
         print(f"training time: {minutes:.1f} min")
         if DEVICE == "cuda":
@@ -314,7 +314,7 @@ if __name__ == "__main__":
         plt.xlabel("epoch")
         plt.ylabel("loss")
         plt.legend()
-        plt.savefig("timegan_losses{suffix}.png", dpi=150)
+        plt.savefig(f"timegan_losses{suffix}.png", dpi=150)
 
         # check phase 1 on TEST windows: hours the autoencoder never trained on
         real, stock = next(iter(test_loader))
