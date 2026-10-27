@@ -12,10 +12,11 @@ def with_label(x, labels, num_stocks=5):
 
 # ---------------------------------------------------------------------------
 # RecurrentBlock - the shared building block
-# shape: (batch, 60, in_dim) -> (batch, 60, out_dim)
-# ---------------------------------------------------------------------------
+# shape: (batch, time, in_dim) -> (batch, time, out_dim), for any number of time steps
+# # ---------------------------------------------------------------------------
 
 class RecurrentBlock(nn.Module):
+    """GRU over the sequence, then a linear layer at every step (optional sigmoid). Shared by all networks."""    
     def __init__(self, in_dim, hidden_dim, out_dim, num_layers, sigmoid=False):
         super().__init__()
         self.gru = nn.GRU(in_dim, hidden_dim, num_layers, batch_first=True)
@@ -23,6 +24,7 @@ class RecurrentBlock(nn.Module):
         self.sigmoid = sigmoid
 
     def forward(self, x):
+        """(batch, time, in_dim) -> (batch, time, out_dim)."""        
         output, _ = self.gru(x)
         out = self.linear(output)
         if self.sigmoid:
@@ -34,6 +36,7 @@ class RecurrentBlock(nn.Module):
 # ---------------------------------------------------------------------------
 
 class BaselineGAN(nn.Module):
+    """Plain GAN for sequences, conditioned on stock: GRU generator + GRU discriminator, no autoencoder or supervisor."""
     def __init__(self, feature_dim, hidden_dim, num_layers, num_stocks=5):
         super().__init__()
         self.noise_dim = feature_dim
@@ -42,6 +45,7 @@ class BaselineGAN(nn.Module):
         self.discriminator = RecurrentBlock(feature_dim + num_stocks, hidden_dim, 1, num_layers)
 
     def sample_noise(self, batch_size, seq_len, device):
+        """Gaussian noise, one vector per time step: (batch, seq_len, noise_dim)."""
         return torch.randn(batch_size, seq_len, self.noise_dim, device=device)
 
     def make_fake(self, noise, labels):
@@ -54,6 +58,7 @@ class BaselineGAN(nn.Module):
         
     @torch.no_grad()
     def generate(self, labels, seq_len, device):
+        """One fake window per label, e.g. labels = [0, 0, 3] gives two AAPL windows and one INTC."""
         noise = self.sample_noise(len(labels), seq_len, device)
         return self.make_fake(noise, labels)
 
@@ -88,6 +93,7 @@ class TimeGAN(nn.Module):
         return self.discriminator(with_label(codes, labels, self.num_stocks))
 
     def sample_noise(self, batch_size, seq_len, device):
+        """Gaussian noise, one vector per time step: (batch, seq_len, noise_dim)."""
         return torch.randn(batch_size, seq_len, self.noise_dim, device=device)
 
     @torch.no_grad()

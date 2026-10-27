@@ -54,7 +54,7 @@ def resample(times, book, dt=1.0):
     idx = np.searchsorted(times, grid, side="right") - 1
     # return grid, book[those indices]
     return grid, book[idx]
-    # question to think about: why does this "carry forward" automatically in empty seconds? lowk help idk
+    # empty seconds reuse the last event's book: searchsorted finds the same index again ("carry forward")
 
 def encode(snapshots):
     """Snapshots (T, 40) -> features (T-1, 41): return, 20 price offsets, 20 log sizes."""
@@ -118,8 +118,8 @@ class LOBWindows(Dataset):
         return self.data[start:start + self.seq_len], self.stock_id
 
 def decode(features, mean, std, start_mid):
-#   goal: the exact reverse of normalise + encode -> back to a (T, 40) order book
-#   test: decoding the real features should give back the real snapshots (minus the first row)
+    """Features (T, 41) -> order book (T, 40): the exact reverse of normalise + encode.
+    The mid-price path is rebuilt by compounding the log-returns from start_mid."""
     x = features * std + mean
 
     log_ret = x[:, 0]                         # column 0

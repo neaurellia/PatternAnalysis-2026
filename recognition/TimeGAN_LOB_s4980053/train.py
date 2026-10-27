@@ -57,6 +57,7 @@ def rule_penalty(fake, mean_t, std_t, max_log_size):
 # training loop
 # ---------------------------------------------------------------------------
 def train_baseline(model, loader, epochs, lr, device, max_batches=None, penalty=None):
+    """Plain GAN training: per batch, a discriminator turn (real -> 1, fake -> 0) then a generator turn (fool it)."""
     g_opt = torch.optim.Adam(model.generator.parameters(), lr=lr)
     d_opt = torch.optim.Adam(model.discriminator.parameters(), lr=lr)
     history = {"d_loss": [], "g_loss": []}
@@ -103,11 +104,6 @@ def train_baseline(model, loader, epochs, lr, device, max_batches=None, penalty=
 
 def train_autoencoder(model, loader, epochs, lr, device, max_batches=None):
     """TimeGAN phase 1: embedder + recovery learn to zip and unzip real windows."""
-    '''for each batch of real windows:
-        rebuilt = reconstruct(real)
-        loss = how different rebuilt is from real   (mean squared error)
-        zero_grad → backward → step'''
-
     params = list(model.embedder.parameters()) + list(model.recovery.parameters())
     opt = torch.optim.Adam(params, lr=lr)
     history = []
@@ -116,11 +112,11 @@ def train_autoencoder(model, loader, epochs, lr, device, max_batches=None):
         total, n = 0.0, 0
         for real, stock in loader:
             real = real.to(device)
-            rebuilt = model.reconstruct(real)                           # zip + unzip (your new method)
+            rebuilt = model.reconstruct(real)                           # zip + unzip
             loss = F.mse_loss(rebuilt, real)        # mean squared error
             opt.zero_grad()
             loss.backward()
-            opt.step()                                     # the three optimiser lines
+            opt.step()                                     
 
             total += loss.item()
             n += 1
@@ -302,12 +298,12 @@ if __name__ == "__main__":
         joint_history = train_joint(model, train_loader, 1 if SMOKE_TEST else JOINT_EPOCHS, LR, DEVICE,
                                     max_batches, penalty=penalty, save_fn=save)
         print(f"training time: {(time.time() - start) / 60:.1f} min")
-        if DEVICE == "cuda":                                                                                       # NEW: criterion 5
+        if DEVICE == "cuda":                                                                                       # criterion 5
             print(f"peak GPU memory: {torch.cuda.max_memory_allocated() / 2**20:.0f} MB")
 
         save("final")
 
-        # NEW: phase 3 loss curves
+        # phase 3 loss curves
         plt.figure()
         for key in ("g_loss", "e_loss", "d_loss"):
             plt.plot(joint_history[key], label=key)
@@ -334,7 +330,7 @@ if __name__ == "__main__":
         print(f"test next-step mse: {F.mse_loss(guesses[:, :-1], codes[:, 1:]).item():.2e}")
         print(f"'no change' guess mse: {F.mse_loss(codes[:, :-1], codes[:, 1:]).item():.2e}")
 
-        # NEW: the real test: generated books, per stock (same report as the baseline)
+        # the real test: generated books, per stock (same report as the baseline)
         real_w, real_l = collect(test_loader)
         fake_l = torch.arange(1000) % 5
         fake_w = model.generate(fake_l.to(DEVICE), SEQ_LEN, DEVICE).cpu().numpy()
