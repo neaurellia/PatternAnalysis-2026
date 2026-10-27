@@ -47,7 +47,7 @@ def collect(loader):
     return torch.cat(windows).numpy(), torch.cat(labels).numpy()
 
 def per_stock_report(real_w, real_l, fake_w, fake_l, mean, std, tickers):
-    """Print rule breaks, VWAP offset and volatility clustering for each stock, real vs fake."""
+    """Print rule breaks, huge volumes, VWAP, volatility clustering and KL for each stock, real vs fake."""
     if np.isnan(fake_w).any():
         print("GENERATED WINDOWS CONTAIN NAN")
     for stock_id, ticker in enumerate(tickers):
@@ -57,19 +57,27 @@ def per_stock_report(real_w, real_l, fake_w, fake_l, mean, std, tickers):
         too_big = (fake_books[..., 1::2] > real_books[..., 1::2].max()).mean()
         r_mean, r_std = vwap_stats(real_books)
         f_mean, f_std = vwap_stats(fake_books)
+        r_spread, r_moves = spreads_and_moves(real_books)
+        f_spread, f_moves = spreads_and_moves(fake_books)
+        kl_s, kl_r = kl_divergence(r_spread, f_spread), kl_divergence(r_moves, f_moves)
         print(f"{ticker} | broken ladder {ladder:.1%} | VWAP real {r_mean:.2f}±{r_std:.2f} "
               f"fake {f_mean:.2f}±{f_std:.2f} | clustering real {volatility_clustering(real_books):.3f} "
-              f"fake {volatility_clustering(fake_books):.3f} | huge volumes {too_big:.1%}")
+              f"fake {volatility_clustering(fake_books):.3f} | huge volumes {too_big:.1%} "
+              f"| KL spread {kl_s:.3f} return {kl_r:.3f}")
 
-# TODO: spreads and returns
-#   goal: pull the two quantities the spec's KL targets are about out of a set of books
+def spreads_and_moves(books):
+    """Best bid-ask spread (ticks) and mid-price move per step (half-ticks), flattened."""
+    spread = (books[..., 0] - books[..., 2]) / 100
+    mid = (books[..., 0] + books[..., 2]) / 2
+    moves = np.diff(mid, axis=-1) / 50                    # change between neighbouring steps, in half-ticks
+    return spread.ravel(), moves.ravel()
 
-# TODO: kl_divergence
-#   goal: one number for how different two histograms are (target <= 0.1)
-#   think: both histograms must use the same bins - why?
-
-# TODO: real-vs-real reference
-#   goal: score real training-hour windows against the test hour with the same metrics
-#   (the best a perfect generator could do - your review promises this)
-
-# TODO: ssim on depth heatmaps (last - ask your tutor which real windows to compare against)
+def kl_divergence(real, fake):
+    """KL(real || fake) between histograms with 1-unit-wide bins over the real data's range. 0 = identical."""
+    lo, hi = np.percentile(real, [0.5, 99.5])
+    edges = np.arange(np.floor(lo) - 0.5, np.ceil(hi) + 1.5)          # bins centred on whole numbers
+    p, _ = np.histogram(np.clip(real, lo, hi), bins=edges)
+    q, _ = np.histogram(np.clip(fake, lo, hi), bins=edges)            # SAME bins for both: otherwise not comparable
+    p = p / p.sum() + 1e-10                                           # counts -> probabilities (+ tiny, never log(0))
+    q = q / q.sum() + 1e-10
+    return float(np.sum(p * np.log(p / q)))

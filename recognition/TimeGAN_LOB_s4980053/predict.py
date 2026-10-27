@@ -87,19 +87,28 @@ def make_gif(real_book, fake_book, ticker, path, every=5):
 
 if __name__ == "__main__":
     kind, path = sys.argv[1], sys.argv[2]          # e.g. python predict.py baseline baseline_trained.pt
+    tag = path.replace(".pt", "")                  # e.g. "timegan_ep40": names run's figures
     model, mean, std, settings = load_model(kind, path)
 
-    _, _, test_loader, _, _ = make_loaders(seq_len=settings["seq_len"])     # only the real test windows are needed
+    train_loader, _, test_loader, _, _ = make_loaders(seq_len=settings["seq_len"])     # test windows to score; training windows for the reference
     real_w, real_l = collect(test_loader)
+
+    ds = train_loader.dataset
+    idx = range(0, len(ds), 250)                                  # ~314 training windows, spread over the morning
+    ref_w = np.stack([ds[i][0].numpy() for i in idx])
+    ref_l = np.array([ds[i][1] for i in idx])
+    print("--- reference: real training hours vs real test hour (the best a perfect generator could do) ---")
+    per_stock_report(real_w, real_l, ref_w, ref_l, mean, std, TICKERS)
 
     fake_l = torch.arange(1000) % 5
     fake_w = model.generate(fake_l, settings["seq_len"], "cpu").numpy()
+    print(f"--- {tag} vs real test hour ---")
     per_stock_report(real_w, real_l, fake_w, fake_l.numpy(), mean, std, TICKERS)
 
-    plot_vwap_over_time(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{kind}_vwap_over_time.png")
-    plot_vwap_per_stock(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{kind}_vwap_per_stock.png")
+    plot_vwap_over_time(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{tag}_vwap_over_time.png")
+    plot_vwap_per_stock(real_w, real_l, fake_w, fake_l.numpy(), mean, std, f"{tag}_vwap_per_stock.png")
 
     for stock_id, ticker in enumerate(TICKERS):
         real_book = windows_to_books(real_w[real_l == stock_id][:1], mean, std)[0]
         fake_book = windows_to_books(fake_w[fake_l.numpy() == stock_id][:1], mean, std)[0]
-        make_gif(real_book, fake_book, ticker, f"{kind}_{ticker}.gif")
+        make_gif(real_book, fake_book, ticker, f"{tag}_{ticker}.gif")
